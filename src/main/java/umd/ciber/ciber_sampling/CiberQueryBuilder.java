@@ -183,6 +183,9 @@ public class CiberQueryBuilder implements Iterable<String> {
 
 
 	private static class PathIterator implements Iterator<String>, Closeable {
+		public static final int WAIT_TIMEOUT = 30000;
+		public static final int MAX_RETRIES = 6;
+
 		private static String ftpOverHttpUrl = System.getenv("FTP_OVER_HTTP_URL");
 		private static String localPathPrefix = System.getenv("LOCAL_PATH_PREFIX");
 
@@ -212,14 +215,38 @@ public class CiberQueryBuilder implements Iterable<String> {
 			Search search = new Search.Builder(searchQuery)
 				.addIndex("ciber-inventory")
 				.build();
-			try {
-				SearchResult result = this.client.execute(search);
-				// System.out.println(result.getSourceAsString());
-				this.hits = result.getHits(Map.class).iterator();
-			} catch (IOException e) {
-				log.error("Cannot perform search", e);
-				throw new Error("Cannot perform next inventory search", e);
+
+			execute(search, 0);
+		}
+
+		private void execute(Search search, int times) {
+			if(times >= MAX_RETRIES) {
+				throw new Error("Cannot perform next inventory search after " + times + " attempts.");
 			}
+
+			SearchResult result = null;
+			try {
+				result = this.client.execute(search);
+			} catch (IOException e) {
+				log.error("Cannot perform search" + e);
+			}
+
+			if(result != null && result.isSucceeded()) {
+				this.hits = result.getHits(Map.class).iterator();
+			} else{
+				waitForRetry(search, times);
+			}
+		}
+
+		private void waitForRetry(Search search, int times) {
+			log.info("Waiting 30 seconds before retrying.");
+			try {
+				Thread.sleep(WAIT_TIMEOUT);
+			} catch (InterruptedException ex) {
+				ex.printStackTrace();
+			}
+			log.info("Retrying request again. Times [%s].", ++times);
+			execute(search, times);
 		}
 
 		public boolean hasNext() {
